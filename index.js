@@ -1,552 +1,343 @@
-'use strict';
-var express = require('express');
-var bodyParser = require('body-parser');
-var request = require('request');
-var http = require("http");
+'use strict'
+const url = require('url')
+const qs = require('querystring')
+const EventEmitter = require('events').EventEmitter
+const request = require('request-promise')
+const crypto = require('crypto')
 
-var app = express();
-app.set('port', (process.env.PORT || 8080));
+class Bot extends EventEmitter {
+  constructor (opts) {
+    super()
 
-app.use(bodyParser.urlencoded({extended: false}));
+    opts = opts || {}
+    if (!opts.token) {
+      throw new Error('Missing page token. See FB documentation for details: https://developers.facebook.com/docs/messenger-platform/quickstart')
+    }
+    this.graph_url = opts.graph_url ? opts.graph_url : 'https://graph.facebook.com/v2.12/'
+    this.token = opts.token
+    this.app_secret = opts.app_secret || false
+    this.verify_token = opts.verify || false
+    this.debug = opts.debug || false
+  }
 
-app.use(bodyParser.json());
+  getProfile (id, cb) {
+    return request({
+      method: 'GET',
+      uri: `${this.graph_url}${id}`,
+      qs: this._getQs({fields: 'first_name,last_name,profile_pic,locale,timezone,gender'}),
+      json: true
+    })
+      .then(body => {
+        if (body.error) return Promise.reject(body.error)
+        if (!cb) return body
+        cb(null, body)
+      })
+      .catch(err => {
+        if (!cb) return Promise.reject(err)
+        cb(err)
+      })
+  }
 
-// recommended to inject access tokens as environmental variables, e.g.
-var token = process.env.FB_PAGE_ACCESS_TOKEN;
+  sendMessage (recipient, payload, cb, messagingType = null, tag = null) {
+    let options = {
+      method: 'POST',
+      uri: this.graph_url + 'me/messages',
+      qs: this._getQs(),
+      json: {
+        recipient: { id: recipient },
+        message: payload
+      }
+    }
+    if (messagingType === 'MESSAGE_TAG') {
+      if (tag != null) {
+        options.json.tag = tag
+      } else {
+        cb(new Error('You must specify a Tag'))
+      }
+    }
+    if (messagingType != null) {
+      options.json.messaging_type = messagingType
+    }
+    return request(options)
+      .then(body => {
+        if (body.error) return Promise.reject(body.error)
+        if (!cb) return body
+        cb(null, body)
+      })
+      .catch(err => {
+        if (!cb) return Promise.reject(err)
+        cb(err)
+      })
+  }
 
-var buttons;
-var queryUrl = 'http://api.susi.ai/susi/chat.json?q='+'Share';
-var message = '';
-// Wait until done and reply
-request({
-	url: queryUrl,
-	json: true
-}, function (error, response, body) {
-	if (!error && response.statusCode === 200) {
-		message = body.answers[0].actions[0].expression;
-		buttons = [
-		              {
-		                "type":"element_share",
-		              	"share_contents": { 
-				          "attachment": {
-				            "type": "template",
-				            "payload": {
-				              "template_type": "generic",
-				              "elements": [
-				                {
-				                  "title": message,
-				                  "buttons": [
-				                    {
-				                      "type": "web_url",
-				                      "url": "https://m.me/asksusiai", 
-				                      "title": "Chat with SUSI AI"
-				                    }
-				                  ]
-				                }
-				              ]
-				            }
-				          }
-				        }
-		              } 
-		          ];
+  sendSenderAction (recipient, senderAction, cb) {
+    return request({
+      method: 'POST',
+      uri: this.graph_url + 'me/messages',
+      qs: this._getQs(),
+      json: {
+        recipient: {
+          id: recipient
+        },
+        sender_action: senderAction
+      }
+    })
+      .then(body => {
+        if (body.error) return Promise.reject(body.error)
+        if (!cb) return body
+        cb(null, body)
+      })
+      .catch(err => {
+        if (!cb) return Promise.reject(err)
+        cb(err)
+      })
+  }
 
-	}
-	else{
-		message = 'Oops, Looks like Susi is taking a break, She will be back soon';
-	}
-});
+  setField (field, payload, cb) {
+    return request({
+      method: 'POST',
+      uri: this.graph_url + 'me/messenger_profile',
+      qs: this._getQs(),
+      json: {
+        [field]: payload
+      }
+    })
+      .then(body => {
+        if (body.error) return Promise.reject(body.error)
+        if (!cb) return body
+        cb(null, body)
+      })
+      .catch(err => {
+        if (!cb) return Promise.reject(err)
+        cb(err)
+      })
+  }
 
-function messengerCodeGenerator(){
-	request({
-			url: 'https://graph.facebook.com/v2.6/me/messenger_codes',
-			qs: {access_token:token},
-			method: 'POST',
-			json: {
-					type: "standard",
-					image_size: 1000
-			}
-		}, function(error, response, body) {
-			if (error) {
-				console.log('Error sending messages: ', error);
-			} else if (response.body.error) {
-				console.log('Error: ', response.body.error);
-			}
-			else{
-				console.log('Messenger code - '+response.body);
-			}
-		});
+  deleteField (field, cb) {
+    return request({
+      method: 'DELETE',
+      uri: this.graph_url + 'me/messenger_profile',
+      qs: this._getQs(),
+      json: {
+        fields: [field]
+      }
+    })
+      .then(body => {
+        if (body.error) return Promise.reject(body.error)
+        if (!cb) return body
+        cb(null, body)
+      })
+      .catch(err => {
+        if (!cb) return Promise.reject(err)
+        cb(err)
+      })
+  }
+
+  unlinkAccount (psid, cb) {
+    return request({
+      method: 'POST',
+      uri: this.graph_url + 'me/unlink_accounts',
+      qs: this._getQs(),
+      json: {
+        psid: psid
+      }
+    })
+      .then(body => {
+        if (body.error) return Promise.reject(body.error)
+        if (!cb) return body
+        cb(null, body)
+      })
+      .catch(err => {
+        if (!cb) return Promise.reject(err)
+        cb(err)
+      })
+  }
+
+  getAttachmentUploadId (url, isReusable, type, cb) {
+    return request({
+      method: 'POST',
+      uri: this.graph_url + 'me/message_attachments',
+      qs: this._getQs(),
+      json: {
+        message: {
+          attachment: {
+            type: type,
+            payload: {
+              is_reusable: isReusable,
+              url: url
+            }
+          }
+        }
+      }
+    })
+      .then(body => {
+        if (body.error) return Promise.reject(body.error)
+        if (!cb) return body
+        cb(null, body)
+      })
+      .catch(err => {
+        if (!cb) return Promise.reject(err)
+        cb(err)
+      })
+  }
+
+  setGetStartedButton (payload, cb) {
+    return this.setField('get_started', payload, cb)
+  }
+
+  setPersistentMenu (payload, cb) {
+    return this.setField('persistent_menu', payload, cb)
+  }
+
+  setDomainWhitelist (payload, cb) {
+    return this.setField('whitelisted_domains', payload, cb)
+  }
+
+  setGreeting (payload, cb) {
+    return this.setField('greeting', payload, cb)
+  }
+
+  removeGetStartedButton (cb) {
+    return this.deleteField('get_started', cb)
+  }
+
+  removePersistentMenu (cb) {
+    return this.deleteField('persistent_menu', cb)
+  }
+
+  removeDomainWhitelist (cb) {
+    return this.deleteField('whitelisted_domains', cb)
+  }
+
+  removeGreeting (cb) {
+    return this.deleteField('greeting', cb)
+  }
+
+  middleware () {
+    return (req, res) => {
+      // we always write 200, otherwise facebook will keep retrying the request
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      if (req.url === '/_status') return res.end(JSON.stringify({status: 'ok'}))
+      if (this.verify_token && req.method === 'GET') return this._verify(req, res)
+      if (req.method !== 'POST') return res.end()
+
+      let body = ''
+
+      req.on('data', (chunk) => {
+        body += chunk
+      })
+
+      req.on('end', () => {
+        // check message integrity
+        if (this.app_secret) {
+          let hmac = crypto.createHmac('sha1', this.app_secret)
+          hmac.update(body)
+
+          if (req.headers['x-hub-signature'] !== `sha1=${hmac.digest('hex')}`) {
+            this.emit('error', new Error('Message integrity check failed'))
+            return res.end(JSON.stringify({status: 'not ok', error: 'Message integrity check failed'}))
+          }
+        }
+
+        let parsed = JSON.parse(body)
+        if (parsed.entry[0].messaging !== null && typeof parsed.entry[0].messaging[0] !== 'undefined') {
+          this._handleMessage(parsed)
+        }
+
+        res.end(JSON.stringify({status: 'ok'}))
+      })
+    }
+  }
+
+  _getQs (qs) {
+    if (typeof qs === 'undefined') {
+      qs = {}
+    }
+    qs['access_token'] = this.token
+
+    if (this.debug) {
+      qs['debug'] = this.debug
+    }
+
+    return qs
+  }
+
+  _handleMessage (json) {
+    let entries = json.entry
+
+    entries.forEach((entry) => {
+      let events = entry.messaging
+
+      events.forEach((event) => {
+        // handle inbound messages and echos
+        if (event.message) {
+          if (event.message.is_echo) {
+            this._handleEvent('echo', event)
+          } else {
+            this._handleEvent('message', event)
+          }
+        }
+
+        // handle postbacks
+        if (event.postback) {
+          this._handleEvent('postback', event)
+        }
+
+        // handle message delivered
+        if (event.delivery) {
+          this._handleEvent('delivery', event)
+        }
+
+        // handle message read
+        if (event.read) {
+          this._handleEvent('read', event)
+        }
+
+        // handle authentication
+        if (event.optin) {
+          this._handleEvent('authentication', event)
+        }
+
+        // handle referrals (e.g. m.me links)
+        if (event.referral) {
+          this._handleEvent('referral', event)
+        }
+
+        // handle account_linking
+        if (event.account_linking && event.account_linking.status) {
+          if (event.account_linking.status === 'linked') {
+            this._handleEvent('accountLinked', event)
+          } else if (event.account_linking.status === 'unlinked') {
+            this._handleEvent('accountUnlinked', event)
+          }
+        }
+      })
+    })
+  }
+
+  _getActionsObject (event) {
+    return {
+      setTyping: (typingState, cb) => {
+        let senderTypingAction = typingState ? 'typing_on' : 'typing_off'
+        this.sendSenderAction(event.sender.id, senderTypingAction, cb)
+      },
+      markRead: this.sendSenderAction.bind(this, event.sender.id, 'mark_seen')
+    }
+  }
+
+  _verify (req, res) {
+    let query = qs.parse(url.parse(req.url).query)
+
+    if (query['hub.verify_token'] === this.verify_token) {
+      return res.end(query['hub.challenge'])
+    }
+
+    return res.end('Error, wrong validation token')
+  }
+
+  _handleEvent (type, event) {
+    this.emit(type, event, this.sendMessage.bind(this, event.sender.id), this._getActionsObject(event))
+  }
 }
 
-function sendTextMessage(sender, text, flag) {
-	var messageData;
-	if(flag === 1){
-		messageData = { attachment: text };
-	}
-	else{
-		messageData = {text:text};
-	}
-	request({
-		url: 'https://graph.facebook.com/v2.6/me/messages',
-		qs: {access_token:token},
-		method: 'POST',
-		json: {
-			recipient: {id:sender},
-			message: messageData,
-		}
-	}, function(error, response, body) {
-		if (error) {
-			console.log('Error sending messages: ', error);
-		} else if (response.body.error) {
-			console.log('Error: ', response.body.error);
-		}
-		typingIndicator(sender,0);
-	});
-}
-
-function sendGenericMessage(sender, message, url, buttonTitle){
-	var messageT = {
-					"type": "template",
-					"payload": 
-					{
-						"template_type": "generic",
-						"elements": [
-										{
-	            							"title": message,
-	            							"buttons": [
-									                    {
-									                      "type": "web_url",
-									                      "url": url, 
-									                      "title": buttonTitle
-									                    }
-									                  ]
-	            						}
-	            		]
-					}
-				};
-	sendTextMessage(sender, messageT, 1);
-}
-
-// Add a get started button to the messenger
-function addGetStartedButton(){
-	request({
-		url: 'https://graph.facebook.com/v2.6/me/messenger_profile',
-		qs: {access_token:token},
-		method: 'POST',
-		json: { 
-		  "get_started":{
-		    "payload":"GET_STARTED_PAYLOAD"
-		  }
-		}
-	}, function(error, response, body) {
-		if (error) {
-			console.log('Error sending messages: ', error)
-		} else if (response.body.error) {
-			console.log('Error: ', response.body.error)
-		}
-	})
-}
-
-function typingIndicator(sender, flag){
-	var typingState;
-	if(flag === 1)
-	{
-		typingState = {
-		  "recipient":{
-		  	"id":sender
-		  },
-		  "sender_action":"typing_on"
-		};
-	}
-	else{
-		typingState = {
-		  "recipient":{
-		  	"id":sender
-		  },
-		  "sender_action":"typing_off"
-		};
-	}
-	request({
-		url: 'https://graph.facebook.com/v2.6/me/messages',
-		qs: {access_token:token},
-		method: 'POST',
-		json: typingState
-	}, function(error, response, body) {
-		if (error) {
-			console.log('Error sending messages: ', error)
-		} else if (response.body.error) {
-			console.log('Error: ', response.body.error)
-		}
-	});
-}
-
-
-function requestReply(sender, text){
-	// Construct the query for susi
-	var queryUrl = 'http://api.susi.ai/susi/chat.json?q='+encodeURI(text);
-	var message = '';
-	// Wait until done and reply
-	request({
-		url: queryUrl,
-		json: true
-	}, function (error, response, body) {
-		if (!error && response.statusCode === 200) {
-			if(body.answers[0])
-			{
-				if(body.answers[0].actions[1]){
-					if(body.answers[0].actions[1].type === 'rss'){
-						sendTextMessage(sender, "I found this on the web:", 0);
-						var arr = [];
-						var metaCnt = body.answers[0].metadata.count;
-						for(var i=0;i<((metaCnt>10)?10:metaCnt);i++){
-							arr.push(
-								{
-									"title": body.answers[0].data[i].title,
-									"subtitle": body.answers[0].data[i].link,
-									"buttons": buttons
-								}
-							);
-						}
-						message = {
-							"type": "template",
-							"payload": 
-							{
-								"template_type": "generic",
-								"elements": arr
-							}
-						};
-					}
-					else if(body.answers[0].actions[2].type === 'map'){
-						var mapMessage = body.answers[0].actions[0].expression;
-						var lat = body.answers[0].actions[2].latitude, lon = body.answers[0].actions[2].longitude;
-						console.log(lat +" "+ lon + " "+ mapMessage);
-						message = {
-			              "type":"template",
-			              "payload":{
-			                "template_type":"generic",
-			                "elements":[{
-			                        "title": mapMessage,
-			                        "image_url": "https://open.mapquestapi.com/staticmap/v4/getmap?key=0OlPA2eN9Bx9AyCLx15G5KbogcMJgRfM&size=600,400&zoom=13&center="+lat+","+lon,
-			                        "item_url": body.answers[0].actions[1].link
-			                    }
-			                ]
-			              }
-			            };
-					}
-				}
-				else{
-					if(body.answers[0].actions[0].type === 'table'){
-						var colNames = body.answers[0].actions[0].columns;
-						if((body.answers[0].metadata.count)>10)
-							sendTextMessage(sender, "Due to message limit, only some results are shown:", 0);
-						else
-							sendTextMessage(sender, "Results are shown below:", 0);
-						var metaCnt = body.answers[0].metadata.count;
-						var arr = [];
-						for(var i=0;i<((metaCnt>10)?10:metaCnt);i++){
-							var titleStr = '';
-							var subtitleStr = '';
-							for(var cN in colNames){
-								if(titleStr !== '')
-									break;
-								titleStr = subtitleStr;
-								subtitleStr = body.answers[0].data[i][cN]; 	
-							}
-							arr.push(
-								{
-									"title": subtitleStr,
-									"subtitle": titleStr,
-									"buttons": buttons             
-								}
-							);
-						}
-						message = {
-							"type": "template",
-							"payload": 
-							{
-								"template_type": "generic",
-								"elements": arr
-							}
-						};
-					}
-				}
-				else{
-					var messageTitle = body.answers[0].actions[0].expression;
-					message = {
-						"type": "template",
-						"payload": 
-						{
-							"template_type": "generic",
-							"elements": [
-											{
-		            							"title": messageTitle,
-		            							"buttons": buttons
-		            						}
-		            		]
-						}
-					};
-				}
-				sendTextMessage(sender, message, 1);
-			}
-		} else {
-			message = 'Oops, Looks like Susi is taking a break, She will be back soon';
-			sendTextMessage(sender, message,0);
-		}
-	});
-}
-
-function persistentMenuGenerator(){
-	request({
-		url: 'https://graph.facebook.com/v2.6/me/messenger_profile',
-		qs: {access_token:token},
-		method: 'POST',
-		json: {
-				  "persistent_menu":[
-				    {
-				      "locale":"default",
-				      "composer_input_disabled":false,
-				      "call_to_actions":[
-				        {
-				          "type":"postback",
-				          "title":"Latest News",
-	                      "payload":"news"
-				        },{
-				          "type":"web_url",
-				          "title":"Visit Repository",
-				          "url":"https://github.com/fossasia/susi_server",
-				          "webview_height_ratio":"full"
-				        }
-				      ]
-				    }
-				  ]
-				}
-	}, function(error, response, body) {
-		if (error) {
-			console.log('Error sending messages: ', error)
-		} else if (response.body.error) {
-			console.log('Error: ', response.body.error)
-		} else {
-			console.log(JSON.stringify(response.body));
-		}
-	})	
-}
-
-function deletePersistentMenu(){
-	request({
-		url: 'https://graph.facebook.com/v2.6/me/messenger_profile',
-		qs: {access_token:token},
-		method: 'DELETE',
-		json: {
-		  "fields":[
-		    "persistent_menu"
-		  ]
-		}
-	}, function(error, response, body) {
-		if (error) {
-			console.log('Error sending messages: ', error)
-		} else if (response.body.error) {
-			console.log('Error: ', response.body.error)
-		} else {
-			console.log(JSON.stringify(response.body));
-		}
-	})
-}
-
-deletePersistentMenu();
-persistentMenuGenerator();
-
-app.get('/', function (req, res) {
-	res.send('Susi says Hello.');
-});
-
-// for facebook verification
-app.get('/webhook/', function (req, res) {
-	if (req.query['hub.verify_token'] === 'my_voice_is_my_password_verify_me') {
-		res.send(req.query['hub.challenge']);
-	}
-	res.send('Error, wrong token');
-});
-
-addGetStartedButton();
-messengerCodeGenerator();
-
-// to post data
-app.post('/webhook/', function (req, res) {
-	var messaging_events = req.body.entry[0].messaging;
-	typingIndicator(req.body.entry[0].messaging[0].sender.id,1);
-	for (var i = 0; i < messaging_events.length; i++) {
-		var event = req.body.entry[0].messaging[i];
-		console.log(JSON.stringify(event)+'\n');
-		var sender = event.sender.id;
-		if (event.message && event.message.text) {
-			var text = event.message.text;
-			if (text === 'image') {
-				// Sample testing URL
-				sendGenericMessage(sender, 'Map Location', 'This is the location', 'http://loklak.org/vis/map.png?mlat=17.77262&mlon=78.2728192&zoom=12');
-				// Images are sent similar to this.
-				// Implement actual logic later here.
-				continue
-			}
-
-			requestReply(sender, text);
-		}
-		else if (event.postback) {
-			var errMessage = 'Oops, Looks like Susi is taking a break, She will be back soon';
-			if(event.postback.payload === 'start_chatting'){
-        		var queryUrl = 'http://api.susi.ai/susi/chat.json?q='+'Start+chatting';
-				var startMessage = '';
-				// Wait until done and reply
-				request({
-					url: queryUrl,
-					json: true
-				}, function (error, response, body) {
-					if (!error && response.statusCode === 200) {
-						startMessage = body.answers[0].actions[0].expression;
-					}
-					else{
-						startMessage = errMessage;
-					}
-	          		sendTextMessage(sender, startMessage, 0);
-
-	          		var messageT = {
-						"type": "template",
-						"payload": 
-						{
-							"template_type": "generic",
-							"elements": [
-											{
-		            							"title": 'You can try the following:',
-		            							"buttons": [
-														        {
-														          "type":"postback",
-														          "title":"What is FOSSASIA?",
-											                      "payload":"What is FOSSASIA?"
-														        },{
-														          "type":"postback",
-														          "title":"Who is Einstein?",
-											                      "payload":"Who is Einstein?"
-														        },{
-														          "type":"postback",
-														          "title":"Borders with INDIA",
-											                      "payload":"Borders with INDIA"
-														        }
-														    ]
-		            						}
-		            		]
-						}
-					};
-					sendTextMessage(sender, messageT, 1);
-				});
-        	}
-        	else if(event.postback.payload === "start_contributing"){
-				var queryUrl = 'http://api.susi.ai/susi/chat.json?q='+'Contribution';
-				var contributeMessage = '';
-
-				// Wait until done and reply
-				request({
-					url: queryUrl,
-					json: true
-				}, function (error, response, body) {
-					if (!error && response.statusCode === 200) {
-						contributeMessage = body.answers[0].actions[0].expression;
-					}
-					else{
-						contributeMessage = errMessage;
-					}
-					var url = "https://github.com/fossasia/susi_server";
-					var buttonTitle = "Visit repository";
-					sendGenericMessage(sender, contributeMessage, url, buttonTitle);
-
-					var queryUrl = 'http://api.susi.ai/susi/chat.json?q='+'Gitter+channel';
-					var gitterMessage = '';
-					// Wait until done and reply
-					request({
-						url: queryUrl,
-						json: true
-					}, function (error, response, body) {
-						if (!error && response.statusCode === 200) {
-							gitterMessage = body.answers[0].actions[0].expression;
-						}
-						else{
-							gitterMessage = errMessage;
-						}
-						url = "https://gitter.im/fossasia/susi_server";
-						buttonTitle = "Chat on Gitter"
-						sendGenericMessage(sender, gitterMessage, url, buttonTitle);
-					});
-				});
-			}
-        	else if(event.postback.payload === 'GET_STARTED_PAYLOAD'){
-        		var queryUrl = 'http://api.susi.ai/susi/chat.json?q='+'Welcome';
-				var welMessage = '';
-				// Wait until done and reply
-				request({
-					url: queryUrl,
-					json: true
-				}, function (error, response, body) {
-					if (!error && response.statusCode === 200) {
-						welMessage = body.answers[0].actions[0].expression;
-					}
-					else{
-						welMessage = errMessage;
-					}
-
-					var queryUrl = 'http://api.susi.ai/susi/chat.json?q='+'Get+started';
-					var introMessage = '';
-					// Wait until done and reply
-					request({
-						url: queryUrl,
-						json: true
-					}, function (error, response, body) {
-						if (!error && response.statusCode === 200) {
-							introMessage = body.answers[0].actions[0].expression;
-						}
-						else{
-							introMessage = errMessage;
-						}
-		        		var messageData = {
-			              "type":"template",
-			              "payload":{
-			                "template_type":"generic",
-			                "elements":[
-			                   {
-			                    "title":welMessage,
-			                    "subtitle":introMessage,
-			                    "buttons":[
-			                      {
-			                        "type":"web_url",
-			                        "url":"https://github.com/fossasia/susi_server",
-			                        "title":"View Repository"
-			                      },{
-			                        "type":"postback",
-			                        "title":"Start Chatting",
-			                        "payload":"start_chatting"
-			                      },{
-			                        "type":"postback",
-			                        "title":"How to contribute?",
-			                        "payload":"start_contributing"
-			                      }                 
-			                    ]      
-			                  }
-			                ]
-			              }
-			            }
-			          	sendTextMessage(sender, messageData, 1);
-			        });
-				});
-        	}
-        	else{
-        		requestReply(sender, event.postback.payload);
-        	}
-			continue;
-		}
-		else{
-			typingIndicator(sender,0);	
-		}
-	}
-	res.sendStatus(200)
-})
-
-// Getting Susi up and running.
-app.listen(app.get('port'), function() {
-	console.log('running on port', app.get('port'));
-});
+module.exports = Bot

@@ -1,5 +1,0 @@
-apiVersion: v1
-metadata:
-  name: facebook
-  namespace: facebook
-kind: ConfigMap
